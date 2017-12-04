@@ -1,0 +1,205 @@
+---
+title: "Seider"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Load Required Packages
+```{r Loading Required Packages}
+library(rpart)
+library(rpart.plot)
+library(recipes)
+library(caret)
+library(ggplot2)
+library(tidyverse)
+library(ROCR)
+library(dummies)
+library(fpc)
+library(clustMixType)
+library(xlsx)
+
+```
+#Load Data Set
+```{r Load Data Set}
+
+Crash <- read.csv("C:/Users/Ab/Documents/MSBIA/Applied Data Mining/HW 3/Data/crash_clean.csv")
+dim(Crash)
+str(Crash)
+summary(Crash)
+```
+#Create Region Variable
+```{r Create Region Variable}
+#Create Region V
+summary(Crash$State)
+Crash$Region<-ifelse(Crash$State=="Illinois"|Crash$State=="Indiana"|
+                       Crash$State=="Michigan"|Crash$State=="Ohio"|
+                       Crash$State=="Wisconsin"|Crash$State=="Iowa"|
+                       Crash$State=="Kansas"|Crash$State=="Minnesota"|
+                       Crash$State=="Missouri"|Crash$State=="Nebraska"|
+                       Crash$State=="North Dakota"|Crash$State=="South Dakota","Midwest",
+                     ifelse(Crash$State=="Connecticut"|Crash$State=="Maine"|
+                              Crash$State=="Massachusetts"|Crash$State=="New Hampshire"|
+                              Crash$State=="Rhode Island"|Crash$State=="Vermont"|
+                              Crash$State=="New Jersey"|Crash$State=="New York"|
+                              Crash$State=="Pennsylvania", "Northeast",
+                            ifelse(Crash$State == "Delaware"| Crash$State =="Florida" | Crash$State == "Georgia" |
+                                     Crash$State == "Maryland" | Crash$State == "North Carolina"
+                                   | Crash$State == "South Carolina" | Crash$State == "Virginia"
+                                   | Crash$State == "District of Columbia" | Crash$State == "West Virginia"
+                                   | Crash$State == "Alabama" | Crash$State == "Kentucky"
+                                   | Crash$State == "Mississippi" | Crash$State == "Tennessee"
+                                   | Crash$State == "Arkansas" | Crash$State == "Louisiana" 
+                                   | Crash$State == "Oklahoma" | Crash$State == "Texas", "South",
+                                   ifelse(Crash$State == "Arizona" | Crash$State == "Colorado"
+                                          | Crash$State == "Idaho" | Crash$State == "Montana"
+                                          | Crash$State == "Nevada" | Crash$State == "New Mexico" 
+                                          | Crash$State == "Utah" | Crash$State == "Wyoming"
+                                          | Crash$State == "Alaska" | Crash$State == "California"
+                                          | Crash$State == "Hawaii" | Crash$State == "Oregon"
+                                          | Crash$State == "Washington","West","NA"))))
+
+table(Crash$Region)
+```
+#Find Missing Values Percentage
+```{r Find Missing Values Percentage}
+pMissing <- function(x){sum(is.na(x))/length(x)*100} 
+apply(Crash,2,pMissing)
+```
+#Histogram of the Age
+```{r}
+hist(as.numeric(Crash$Age))
+```
+Filter out Unknown Ages as there is not logical way to infer
+```{r}
+Crash <- filter (Crash, Crash$Age != "Unknown")
+apply(Crash,2,pMissing)
+```
+#More Data Cleanup
+```{r}
+#Remove all of the original variable before they were cleaned in excel
+names(Crash)
+Crash <- Crash[,-c(5,7,9:11)]
+names(Crash)
+Crash <- Crash[,-c(12)]
+#Rename the cleaned variable
+names(Crash)
+Crash$Race <- Crash$Race.Cleaned
+Crash$Gender <- Crash$Gender.Cleaned
+Crash$Drug.Involvement <- Crash$Drug.Involvment.Clean
+Crash$Age <- Crash$Age.Cleaned
+names(Crash)
+#Remove the cleaned variable since the are now duplicates
+Crash <- Crash[,-c(12:15)]
+names(Crash)
+summary(Crash)
+apply(Crash,2,pMissing)
+names(Crash)
+#Remove date, year, month, day, week, and state variables
+Crash <- Crash[, -c(1,3,8:11)]
+apply(Crash,2,pMissing)
+names(Crash)
+```
+
+#Z score the number variables
+```{r}
+#Crash$Fatalities.in.crash <- as.data.frame(scale(Crash$Fatalities.in.crash))
+#Crash$Age <- as.numeric(Crash$Age)
+#Crash$Age <- as.data.frame(scale(Crash$Age))
+#summary(Crash$Age)
+```
+
+#create dummy variables for all categorical variables
+```{r}
+Crash.D <- dummy.data.frame(Crash, names = 'Atmospheric.Condition', sep = ":")
+Crash.D <- dummy.data.frame(Crash.D, names = 'Roadway.Category', sep = ":")
+Crash.D <- dummy.data.frame(Crash.D, names = 'Person.Type', sep = ":")
+Crash.D <- dummy.data.frame(Crash.D, names = 'Injury.Severity', sep = ":")
+Crash.D <- dummy.data.frame(Crash.D, names = 'Region', sep = ":")
+Crash.D <- dummy.data.frame(Crash.D, names = 'Race', sep = ":")
+Crash.D <- dummy.data.frame(Crash.D, names = 'Gender', sep = ":")
+Crash.D <- dummy.data.frame(Crash.D, names = 'Drug.Involvement', sep = ":")
+names(Crash.D)
+head(Crash.D)
+```
+
+#Min-Max Normalize Numeric Feilds
+```{r minMix}
+MinMaxNormalize <- function(x){return((x-min(x))/(max(x)-min(x)))}
+CrashNum <- Crash.D[,c(13:14)]
+CrashNum$Age <- as.integer(CrashNum$Age)
+CrashNormal <- as.data.frame(lapply(CrashNum, MinMaxNormalize))
+summary(CrashNormal)
+```
+#Put Data Set Back Together
+```{R cbind}
+Crash.D = lapply(Crash.D, factor)
+CrashModel <- cbind(Crash.D, CrashNormal)
+names(CrashModel)
+CrashModel <- CrashModel[,-c(13:14)]
+names(CrashModel)
+lapply(CrashModel, class)
+```
+
+# Elbow Method for finding the optimal number of clusters
+# Compute and plot wss for k = 2 to k = 15.
+```{r elbow}
+k.max <- 15
+
+wss <- sapply(1:k.max, 
+              function(k){kproto(CrashModel, k)$tot.withinss})
+wss
+plot(1:k.max, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares")
+```
+#Creat Clusters With KProto
+```{r}
+set.seed(123)
+```
+#3 Clusters
+```{r 3clusters}
+CrashKProto3 <- kproto(CrashModel, k= 3)
+summary(CrashKProto3)
+CrashKProto3$size
+ProfileKProto3 <- data.frame(t(CrashKProto3$centers))
+ProfileKProto3
+clprofiles(CrashKProto3, CrashModel)
+
+
+```
+#8 Clusters
+```{r 8clusters}
+CrashKProto8 <- kproto(CrashModel, k= 8)
+summary(CrashKProto8)
+CrashKProto8$size
+ProfileKProto8 <- data.frame(t(CrashKProto8$centers))
+ProfileKProto8
+clprofiles(CrashKProto8, CrashModel)
+
+
+```
+
+#Cluster Cohesion
+#Calculate withinss
+
+```{r Cohesion}
+KProto3C <- CrashKProto3$withinss/CrashKProto3$tot.withinss
+KProto8C <- CrashKProto8$withinss/CrashKProto8$tot.withinss
+
+KProtoCohesion <- c(KProto3C,KProto8C)
+print(KProtoCohesion)
+```
+
+#Add the clusters back to the original data set
+```{r AddBack}
+Crash$kProto3 <- CrashKProto3$cluster
+Crash$kProto8 <- CrashKProto8$cluster
+```
+
+#Export the data
+```{r Export}
+write.xlsx(Crash, "C:/Users/Ab/Documents/MSBIA/Applied Data Mining/HW 3/Data/CrashCluster.xlsx")
+```
